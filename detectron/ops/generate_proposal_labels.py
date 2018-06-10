@@ -24,6 +24,8 @@ from detectron.datasets import json_dataset
 from detectron.datasets import roidb as roidb_utils
 from detectron.utils import blob as blob_utils
 import detectron.roi_data.fast_rcnn as fast_rcnn_roi_data
+import detectron.roi_data.polygon_rcnn as polygon_rcnn_roi_data
+from detectron.core.config import cfg
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +43,23 @@ class GenerateProposalLabelsOp(object):
         roidb = blob_utils.deserialize(inputs[1].data)
         im_info = inputs[2].data
         im_scales = im_info[:, 2]
-        output_blob_names = fast_rcnn_roi_data.get_fast_rcnn_blob_names()
+        if cfg.POLYGON.POLYGON_ON:
+            output_blob_names = polygon_rcnn_roi_data.get_polygon_rcnn_blob_names()
+        else:
+            output_blob_names = fast_rcnn_roi_data.get_fast_rcnn_blob_names()
         # For historical consistency with the original Faster R-CNN
         # implementation we are *not* filtering crowd proposals.
         # This choice should be investigated in the future (it likely does
         # not matter).
         json_dataset.add_proposals(roidb, rois, im_scales, crowd_thresh=0)
-        roidb_utils.add_bbox_regression_targets(roidb)
+        if cfg.POLYGON.POLYGON_ON:
+            roidb_utils.add_polygon_regression_targets(roidb)
+        else:
+            roidb_utils.add_bbox_regression_targets(roidb)
         blobs = {k: [] for k in output_blob_names}
-        fast_rcnn_roi_data.add_fast_rcnn_blobs(blobs, im_scales, roidb)
+        if cfg.POLYGON.POLYGON_ON:
+            polygon_rcnn_roi_data.add_polygon_rcnn_blobs(blobs, im_scales, roidb)
+        else:
+            fast_rcnn_roi_data.add_fast_rcnn_blobs(blobs, im_scales, roidb)
         for i, k in enumerate(output_blob_names):
             blob_utils.py_op_copy_blob(blobs[k], outputs[i])

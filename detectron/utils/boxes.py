@@ -223,6 +223,61 @@ def bbox_transform_inv(boxes, gt_boxes, weights=(1.0, 1.0, 1.0, 1.0)):
                          targets_dh)).transpose()
     return targets
 
+def polygon_transform_inv(boxes, gt_boxes, gt_segms, weights=(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)):
+    """Inverse transform that computes target bounding-box regression deltas
+    given proposal boxes and ground-truth boxes. The weights argument should be
+    a 4-tuple of multiplicative weights that are applied to the regression
+    target.
+
+    In older versions of this code (and in py-faster-rcnn), the weights were set
+    such that the regression deltas would have unit standard deviation on the
+    training dataset. Presently, rather than computing these statistics exactly,
+    we use a fixed set of weights (10., 10., 5., 5.) by default. These are
+    approximately the weights one would get from COCO using the previous unit
+    stdev heuristic.
+    """
+    ex_widths = boxes[:, 2] - boxes[:, 0] + 1.0
+    ex_heights = boxes[:, 3] - boxes[:, 1] + 1.0
+    ex_ctr_x = boxes[:, 0] + 0.5 * ex_widths
+    ex_ctr_y = boxes[:, 1] + 0.5 * ex_heights
+
+    gt_widths = gt_boxes[:, 2] - gt_boxes[:, 0] + 1.0
+    gt_heights = gt_boxes[:, 3] - gt_boxes[:, 1] + 1.0
+    gt_ctr_x = gt_boxes[:, 0] + 0.5 * gt_widths
+    gt_ctr_y = gt_boxes[:, 1] + 0.5 * gt_heights
+
+    gt_ctr_x1 = gt_boxes[:, 0]
+    gt_ctr_y1 = gt_boxes[:, 1]
+    gt_ctr_x2 = gt_boxes[:, 0] + gt_widths
+    gt_ctr_y2 = gt_boxes[:, 1]
+    gt_ctr_x3 = gt_boxes[:, 0]
+    gt_ctr_y3 = gt_boxes[:, 1] + gt_heights
+    gt_ctr_x4 = gt_boxes[:, 0] + gt_widths
+    gt_ctr_y4 = gt_boxes[:, 1] + gt_heights
+
+    wx1, wy1, wx2, wy2, wx3, wy3, wx4, wy4 = weights
+    '''
+    targets_dx1 = wx1 * (gt_segms[:, 0, 0] - ex_ctr_x) / ex_widths
+    targets_dy1 = wy1 * (gt_segms[:, 0, 1] - ex_ctr_y) / ex_heights
+    targets_dx2 = wx2 * (gt_segms[:, 1, 0] - ex_ctr_x) / ex_widths
+    targets_dy2 = wy2 * (gt_segms[:, 1, 1] - ex_ctr_y) / ex_heights
+    targets_dx3 = wx3 * (gt_segms[:, 2, 0] - ex_ctr_x) / ex_widths
+    targets_dy3 = wy3 * (gt_segms[:, 2, 1] - ex_ctr_y) / ex_heights
+    targets_dx4 = wx4 * (gt_segms[:, 3, 0] - ex_ctr_x) / ex_widths
+    targets_dy4 = wy4 * (gt_segms[:, 3, 1] - ex_ctr_y) / ex_heights
+    '''
+    targets_dx1 = wx1 * (gt_ctr_x1 - ex_ctr_x) / ex_widths
+    targets_dy1 = wy1 * (gt_ctr_y1 - ex_ctr_y) / ex_heights
+    targets_dx2 = wx2 * (gt_ctr_x2 - ex_ctr_x) / ex_widths
+    targets_dy2 = wy2 * (gt_ctr_y2 - ex_ctr_y) / ex_heights
+    targets_dx3 = wx3 * (gt_ctr_x3 - ex_ctr_x) / ex_widths
+    targets_dy3 = wy3 * (gt_ctr_y3 - ex_ctr_y) / ex_heights
+    targets_dx4 = wx4 * (gt_ctr_x4 - ex_ctr_x) / ex_widths
+    targets_dy4 = wy4 * (gt_ctr_y4 - ex_ctr_y) / ex_heights
+
+    targets = np.vstack((targets_dx1, targets_dy1, targets_dx2, targets_dy2, targets_dx3, targets_dy3, targets_dx4, targets_dy4)).transpose()
+    return targets
+
 
 def expand_boxes(boxes, scale):
     """Expand an array of boxes by a given scale."""

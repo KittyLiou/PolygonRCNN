@@ -45,6 +45,7 @@ from caffe2.python import workspace
 from detectron.core.config import cfg
 from detectron.modeling.detector import DetectionModelHelper
 from detectron.roi_data.loader import RoIDataLoader
+import detectron.modeling.polygon_rcnn_heads as polygon_rcnn_heads
 import detectron.modeling.fast_rcnn_heads as fast_rcnn_heads
 import detectron.modeling.keypoint_rcnn_heads as keypoint_rcnn_heads
 import detectron.modeling.mask_rcnn_heads as mask_rcnn_heads
@@ -197,11 +198,18 @@ def build_generic_detection_model(
             )
 
         if not cfg.MODEL.RPN_ONLY:
-            # Add the Fast R-CNN head
-            head_loss_gradients['box'] = _add_fast_rcnn_head(
-                model, add_roi_box_head_func, blob_conv, dim_conv,
-                spatial_scale_conv
-            )
+            if cfg.POLYGON.POLYGON_ON:
+                # Add the Polygon R-CNN head
+                head_loss_gradients['box'] = _add_polygon_rcnn_head(
+                    model, add_roi_box_head_func, blob_conv, dim_conv,
+                    spatial_scale_conv
+                )
+            else:
+                # Add the Fast R-CNN head
+                head_loss_gradients['box'] = _add_fast_rcnn_head(
+                    model, add_roi_box_head_func, blob_conv, dim_conv,
+                    spatial_scale_conv
+                )
 
         if cfg.MODEL.MASK_ON:
             # Add the mask head
@@ -244,6 +252,20 @@ def _narrow_to_fpn_roi_levels(blobs, spatial_scales):
     # max/coarsest level to min/finest level)
     num_roi_levels = cfg.FPN.ROI_MAX_LEVEL - cfg.FPN.ROI_MIN_LEVEL + 1
     return blobs[-num_roi_levels:], spatial_scales[-num_roi_levels:]
+
+def _add_polygon_rcnn_head(
+    model, add_roi_box_head_func, blob_in, dim_in, spatial_scale_in
+):
+    """Add a Polygon R-CNN head to the model."""
+    blob_frcn, dim_frcn = add_roi_box_head_func(
+        model, blob_in, dim_in, spatial_scale_in
+    )
+    polygon_rcnn_heads.add_polygon_rcnn_outputs(model, blob_frcn, dim_frcn)
+    if model.train:
+        loss_gradients = polygon_rcnn_heads.add_polygon_rcnn_losses(model)
+    else:
+        loss_gradients = None
+    return loss_gradients
 
 
 def _add_fast_rcnn_head(

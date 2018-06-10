@@ -134,6 +134,7 @@ __C.TRAIN.PROPOSAL_FILES = ()
 # faster)
 __C.TRAIN.ASPECT_GROUPING = True
 
+
 # ---------------------------------------------------------------------------- #
 # RPN training options
 # ---------------------------------------------------------------------------- #
@@ -654,6 +655,16 @@ __C.FAST_RCNN.ROI_XFORM_SAMPLING_RATIO = 0
 # Note: some models may have constraints on what they can use, e.g. they use
 # pretrained FC layers like in VGG16, and will ignore this option
 __C.FAST_RCNN.ROI_XFORM_RESOLUTION = 14
+
+
+# ---------------------------------------------------------------------------- #
+# POLYGON options
+# ---------------------------------------------------------------------------- #
+__C.POLYGON = AttrDict()
+
+# [Infered value; do not set directly in a config]
+# Indicates that the model contains an RPN subnetwork
+__C.POLYGON.POLYGON_ON = False
 
 
 # ---------------------------------------------------------------------------- #

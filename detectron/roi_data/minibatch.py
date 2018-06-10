@@ -35,6 +35,7 @@ import numpy as np
 from detectron.core.config import cfg
 import detectron.roi_data.fast_rcnn as fast_rcnn_roi_data
 import detectron.roi_data.retinanet as retinanet_roi_data
+import detectron.roi_data.polygon_rcnn as polygon_rcnn_roi_data
 import detectron.roi_data.rpn as rpn_roi_data
 import detectron.utils.blob as blob_utils
 
@@ -51,6 +52,10 @@ def get_minibatch_blob_names(is_training=True):
         blob_names += rpn_roi_data.get_rpn_blob_names(is_training=is_training)
     elif cfg.RETINANET.RETINANET_ON:
         blob_names += retinanet_roi_data.get_retinanet_blob_names(
+            is_training=is_training
+        )
+    elif cfg.POLYGON.POLYGON_ON:
+        blob_names += polygon_rcnn_roi_data.get_polygon_rcnn_blob_names(
             is_training=is_training
         )
     else:
@@ -80,6 +85,9 @@ def get_minibatch(roidb):
         valid = retinanet_roi_data.add_retinanet_blobs(
             blobs, im_scales, roidb, im_width, im_height
         )
+    elif cfg.POLYGON.POLYGON_ON:
+        # Polygon R-CNN like models trained on precomputed proposals
+        valid = fast_rcnn_roi_data.add_polygon_rcnn_blobs(blobs, im_scales, roidb)
     else:
         # Fast R-CNN like models trained on precomputed proposals
         valid = fast_rcnn_roi_data.add_fast_rcnn_blobs(blobs, im_scales, roidb)

@@ -141,6 +141,11 @@ def add_bbox_regression_targets(roidb):
     for entry in roidb:
         entry['bbox_targets'] = compute_bbox_regression_targets(entry)
 
+def add_polygon_regression_targets(roidb):
+    """Add information needed to train bounding-box regressors."""
+    for entry in roidb:
+        entry['polygon_targets'] = compute_polygon_regression_targets(entry)
+
 
 def compute_bbox_regression_targets(entry):
     """Compute bounding-box regression targets for an image."""
@@ -173,6 +178,41 @@ def compute_bbox_regression_targets(entry):
         1 if cfg.MODEL.CLS_AGNOSTIC_BBOX_REG else labels[ex_inds])
     targets[ex_inds, 1:] = box_utils.bbox_transform_inv(
         ex_rois, gt_rois, cfg.MODEL.BBOX_REG_WEIGHTS)
+    return targets
+
+def compute_polygon_regression_targets(entry):
+    """Compute bounding-box regression targets for an image."""
+    # Indices of ground-truth ROIs
+    segms = entry['segms']
+    rois = entry['boxes']
+    overlaps = entry['max_overlaps']
+    labels = entry['max_classes']
+    gt_inds = np.where((entry['gt_classes'] > 0) & (entry['is_crowd'] == 0))[0]
+    # Targets has format (class, tx1, ty1, tx2, ty2, tx3, ty3, tx4, ty4)
+    targets = np.zeros((rois.shape[0], 9), dtype=np.float32)
+    if len(gt_inds) == 0:
+        # Bail if the image has no ground-truth ROIs
+        return targets
+
+    # Indices of examples for which we try to make predictions
+    ex_inds = np.where(overlaps >= cfg.TRAIN.BBOX_THRESH)[0]
+
+    # Get IoU overlap between each ex ROI and gt ROI
+    ex_gt_overlaps = box_utils.bbox_overlaps(
+        rois[ex_inds, :].astype(dtype=np.float32, copy=False),
+        rois[gt_inds, :].astype(dtype=np.float32, copy=False))
+
+    # Find which gt ROI each ex ROI has max overlap with:
+    # this will be the ex ROI's gt target
+    gt_assignment = ex_gt_overlaps.argmax(axis=1)
+    gt_rois = rois[gt_inds[gt_assignment], :]
+    gt_segms = [entry['segms'][i] for i in gt_inds]
+    ex_rois = rois[ex_inds, :]
+    # Use class "1" for all boxes if using class_agnostic_bbox_reg
+    targets[ex_inds, 0] = (
+        1 if cfg.MODEL.CLS_AGNOSTIC_BBOX_REG else labels[ex_inds])
+    targets[ex_inds, 1:] = box_utils.polygon_transform_inv(
+        ex_rois, gt_rois, gt_segms)
     return targets
 
 

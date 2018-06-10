@@ -70,7 +70,7 @@ _DATASETS = {
     },
     'coco_2014_val': {
         _IM_DIR:
-            _DATA_DIR + '/coco/coco_val2014',
+            _DATA_DIR + '/coco/coco_train2014',
         _ANN_FN:
             _DATA_DIR + '/coco/annotations/instances_val2014.json'
     },
@@ -97,6 +97,18 @@ _DATASETS = {
             _DATA_DIR + '/coco/coco_test2015',
         _ANN_FN:
             _DATA_DIR + '/coco/annotations/image_info_test-dev2015.json'
+    },
+    'coco_2017_person_only_minitrain': {
+        _IM_DIR:
+            _DATA_DIR + '/coco/train2017',
+        _ANN_FN:
+            _DATA_DIR + '/coco/annotations/my_annotations_train2017.json'
+    },
+    'coco_2017_person_only_minival': {
+        _IM_DIR:
+            _DATA_DIR + '/coco/train2017',
+        _ANN_FN:
+            _DATA_DIR + '/coco/annotations/my_annotations_val2017.json'
     },
     'coco_2017_test': {  # 2017 test uses 2015 test images
         _IM_DIR:
@@ -195,6 +207,22 @@ _DATASETS = {
             _DATA_DIR + '/VOC2012/VOCdevkit2012'
     },
     'voc_2012_val': {
+        _IM_DIR:
+            _DATA_DIR + '/VOC2012/JPEGImages',
+        _ANN_FN:
+            _DATA_DIR + '/VOC2012/annotations/voc_2012_val.json',
+        _DEVKIT_DIR:
+            _DATA_DIR + '/VOC2012/VOCdevkit2012'
+    },
+    'tool_roi_train': {
+        _IM_DIR:
+            _DATA_DIR + '/VOC2012/JPEGImages',
+        _ANN_FN:
+            _DATA_DIR + '/VOC2012/annotations/voc_2012_train.json',
+        _DEVKIT_DIR:
+            _DATA_DIR + '/VOC2012/VOCdevkit2012'
+    },
+    'tool_roi_val': {
         _IM_DIR:
             _DATA_DIR + '/VOC2012/JPEGImages',
         _ANN_FN:
