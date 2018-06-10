@@ -29,6 +29,7 @@ import pycocotools.mask as mask_util
 from detectron.utils.colormap import colormap
 import detectron.utils.env as envu
 import detectron.utils.keypoints as keypoint_utils
+from detectron.core.config import cfg
 
 # Matplotlib requires certain adjustments in some environments
 # Must happen before importing matplotlib
@@ -260,8 +261,12 @@ def vis_one_image(
         boxes, segms, keypoints, classes = convert_from_cls_format(
             boxes, segms, keypoints)
 
-    if boxes is None or boxes.shape[0] == 0 or max(boxes[:, 4]) < thresh:
-        return
+    if cfg.POLYGON.POLYGON_ON:
+        if boxes is None or boxes.shape[0] == 0 or max(boxes[:, 8]) < thresh:
+            return
+    else:
+        if boxes is None or boxes.shape[0] == 0 or max(boxes[:, 4]) < thresh:
+            return
 
     dataset_keypoints, _ = keypoint_utils.get_keypoints()
 
@@ -282,33 +287,63 @@ def vis_one_image(
     ax.imshow(im)
 
     # Display in largest to smallest order to reduce occlusion
-    areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+    if cfg.POLYGON.POLYGON_ON:
+        areas = (boxes[:, 5] - boxes[:, 0]) * (boxes[:, 6] - boxes[:, 1])
+    else:
+        areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
     sorted_inds = np.argsort(-areas)
 
     mask_color_id = 0
     for i in sorted_inds:
-        bbox = boxes[i, :4]
-        score = boxes[i, -1]
-        if score < thresh:
-            continue
+        if cfg.POLYGON.POLYGON_ON:
+            polygon = boxes[i, :8]
+            score = boxes[i, -1]
+            if score < thresh:
+                continue
 
-        # show box (off by default)
-        ax.add_patch(
-            plt.Rectangle((bbox[0], bbox[1]),
-                          bbox[2] - bbox[0],
-                          bbox[3] - bbox[1],
-                          fill=False, edgecolor=np.random.rand(3,),
-                          linewidth=1.5, alpha=box_alpha))
+            # show box (off by default)
+            ax.add_patch(
+                # draw line between points
+                plt.Polygon(
+                    polygon.reshape(int(polygon.shape[0]/2),2),
+                    fill=False,
+                    edgecolor=np.random.rand(3, ),
+                    linewidth=1.5,
+                    alpha=box_alpha)
+               )
 
-        if show_class:
-            ax.text(
-                bbox[0], bbox[1] - 2,
-                get_class_string(classes[i], score, dataset),
-                fontsize=3,
-                family='serif',
-                bbox=dict(
-                    facecolor='g', alpha=0.4, pad=0, edgecolor='none'),
-                color='white')
+            if show_class:
+                ax.text(
+                    polygon[0], polygon[1] - 2,
+                    get_class_string(classes[i], score, dataset),
+                    fontsize=3,
+                    family='serif',
+                    bbox=dict(
+                        facecolor='g', alpha=0.4, pad=0, edgecolor='none'),
+                    color='white')
+        else:
+            bbox = boxes[i, :4]
+            score = boxes[i, -1]
+            if score < thresh:
+                continue
+
+            # show box (off by default)
+            ax.add_patch(
+                plt.Rectangle((bbox[0], bbox[1]),
+                              bbox[2] - bbox[0],
+                              bbox[3] - bbox[1],
+                              fill=False, edgecolor=np.random.rand(3,),
+                              linewidth=1.5, alpha=box_alpha))
+
+            if show_class:
+                ax.text(
+                    bbox[0], bbox[1] - 2,
+                    get_class_string(classes[i], score, dataset),
+                    fontsize=3,
+                    family='serif',
+                    bbox=dict(
+                        facecolor='g', alpha=0.4, pad=0, edgecolor='none'),
+                    color='white')
 
         # show mask
         if segms is not None and len(segms) > i:

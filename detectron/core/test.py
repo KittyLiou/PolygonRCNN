@@ -59,12 +59,21 @@ def im_detect_all(model, im, box_proposals, timers=None):
         return cls_boxes, None, None
 
     timers['im_detect_bbox'].tic()
-    if cfg.TEST.BBOX_AUG.ENABLED:
-        scores, boxes, im_scale = im_detect_bbox_aug(model, im, box_proposals)
+    if cfg.POLYGON.POLYGON_ON:
+        #not implemented yet
+        if cfg.TEST.BBOX_AUG.ENABLED:
+            scores, boxes, im_scale = im_detect_bbox_aug(model, im, box_proposals)
+        else:
+            scores, polygons, im_scale = im_detect_polygon(
+                model, im, cfg.TEST.SCALE, cfg.TEST.MAX_SIZE, boxes=box_proposals
+            )
     else:
-        scores, boxes, im_scale = im_detect_bbox(
-            model, im, cfg.TEST.SCALE, cfg.TEST.MAX_SIZE, boxes=box_proposals
-        )
+        if cfg.TEST.BBOX_AUG.ENABLED:
+            scores, boxes, im_scale = im_detect_bbox_aug(model, im, box_proposals)
+        else:
+            scores, boxes, im_scale = im_detect_bbox(
+                model, im, cfg.TEST.SCALE, cfg.TEST.MAX_SIZE, boxes=box_proposals
+            )
     timers['im_detect_bbox'].toc()
 
     # score and boxes are from the whole image after score thresholding and nms
@@ -72,7 +81,13 @@ def im_detect_all(model, im, box_proposals, timers=None):
     # cls_boxes boxes and scores are separated by class and in the format used
     # for evaluating results
     timers['misc_bbox'].tic()
-    scores, boxes, cls_boxes = box_results_with_nms_and_limit(scores, boxes)
+    if cfg.POLYGON.POLYGON_ON:
+        scores, polygons, cls_polygons = polygon_results_with_nms_and_limit(scores, polygons)
+        cls_segms = None
+        cls_keyps = None
+        return cls_polygons, cls_segms, cls_keyps
+    else:
+        scores, boxes, cls_boxes = box_results_with_nms_and_limit(scores, boxes)
     timers['misc_bbox'].toc()
 
     if cfg.MODEL.MASK_ON and boxes.shape[0] > 0:
@@ -116,6 +131,82 @@ def im_conv_body_only(model, im, target_scale, target_max_size):
     workspace.FeedBlob(core.ScopedName('data'), im_blob)
     workspace.RunNet(model.conv_body_net.Proto().name)
     return im_scale
+
+
+def im_detect_polygon(model, im, target_scale, target_max_size, boxes=None):
+    """Bounding box object detection for an image with given box proposals.
+
+    Arguments:
+        model (DetectionModelHelper): the detection model to use
+        im (ndarray): color image to test (in BGR order)
+        boxes (ndarray): R x 4 array of object proposals in 0-indexed
+            [x1, y1, x2, y2] format, or None if using RPN
+
+    Returns:
+        scores (ndarray): R x K array of object class scores for K classes
+            (K includes background as object category 0)
+        boxes (ndarray): R x 4*K array of predicted bounding boxes
+        im_scales (list): list of image scales used in the input blob (as
+            returned by _get_blobs and for use with im_detect_mask, etc.)
+    """
+    inputs, im_scale = _get_blobs(im, boxes, target_scale, target_max_size)
+
+    # When mapping from image ROIs to feature map ROIs, there's some aliasing
+    # (some distinct image ROIs get mapped to the same feature ROI).
+    # Here, we identify duplicate feature ROIs, so we only compute features
+    # on the unique subset.
+    if cfg.DEDUP_BOXES > 0 and not cfg.MODEL.FASTER_RCNN:
+        v = np.array([1, 1e3, 1e6, 1e9, 1e12])
+        hashes = np.round(inputs['rois'] * cfg.DEDUP_BOXES).dot(v)
+        _, index, inv_index = np.unique(
+            hashes, return_index=True, return_inverse=True
+        )
+        inputs['rois'] = inputs['rois'][index, :]
+        boxes = boxes[index, :]
+
+    # Add multi-level rois for FPN
+    if cfg.FPN.MULTILEVEL_ROIS and not cfg.MODEL.FASTER_RCNN:
+        _add_multilevel_rois_for_test(inputs, 'rois')
+
+    for k, v in inputs.items():
+        workspace.FeedBlob(core.ScopedName(k), v)
+    workspace.RunNet(model.net.Proto().name)
+
+    # Read out blobs
+    if cfg.MODEL.FASTER_RCNN:
+        rois = workspace.FetchBlob(core.ScopedName('rois'))
+        # unscale back to raw image space
+        boxes = rois[:, 1:5] / im_scale
+
+    # Softmax class probabilities
+    scores = workspace.FetchBlob(core.ScopedName('cls_prob')).squeeze()
+    # In case there is 1 proposal
+    scores = scores.reshape([-1, scores.shape[-1]])
+
+    if cfg.TEST.BBOX_REG:
+        # Apply bounding-box regression deltas
+        box_deltas = workspace.FetchBlob(core.ScopedName('polygon_pred')).squeeze()
+        # In case there is 1 proposal
+        box_deltas = box_deltas.reshape([-1, box_deltas.shape[-1]])
+        if cfg.MODEL.CLS_AGNOSTIC_BBOX_REG:
+            # Remove predictions for bg class (compat with MSRA code)
+            box_deltas = box_deltas[:, -8:]
+        pred_polygons = box_utils.polygon_transform(
+            boxes, box_deltas
+        )
+        pred_polygons = box_utils.clip_tiled_polygons(pred_polygons, im.shape)
+        if cfg.MODEL.CLS_AGNOSTIC_BBOX_REG:
+            pred_polygons = np.tile(pred_polygons, (1, scores.shape[1]))
+    else:
+        # Simply repeat the boxes, once for each class
+        pred_polygons = np.tile(boxes, (1, scores.shape[1]))
+
+    if cfg.DEDUP_BOXES > 0 and not cfg.MODEL.FASTER_RCNN:
+        # Map scores and predictions back to the original set of boxes
+        scores = scores[inv_index, :]
+        pred_polygons = pred_polygons[inv_index, :]
+
+    return scores, pred_polygons, im_scale
 
 
 def im_detect_bbox(model, im, target_scale, target_max_size, boxes=None):
@@ -807,6 +898,72 @@ def box_results_with_nms_and_limit(scores, boxes):
     boxes = im_results[:, :-1]
     scores = im_results[:, -1]
     return scores, boxes, cls_boxes
+
+
+def polygon_results_with_nms_and_limit(scores, boxes):
+    """Returns polygon detection results by thresholding on scores and
+    applying non-maximum suppression (NMS).
+
+    `polygons` has shape (#detections, 8 * #classes), where each row represents
+    a list of predicted polygons for each of the object classes in the
+    dataset (including the background class). The detections in each row
+    originate from the same object proposal.
+
+    `scores` has shape (#detection, #classes), where each row represents a list
+    of object detection confidence scores for each of the object classes in the
+    dataset (including the background class). `scores[i, j]`` corresponds to the
+    box at `boxes[i, j * 8:(j + 1) * 8]`.
+    """
+    num_classes = cfg.MODEL.NUM_CLASSES
+    cls_polygons = [[] for _ in range(num_classes)]
+    # Apply threshold on detection probabilities and apply NMS
+    # Skip j = 0, because it's the background class
+    for j in range(1, num_classes):
+        inds = np.where(scores[:, j] > cfg.TEST.SCORE_THRESH)[0]
+        scores_j = scores[inds, j]
+        polygons_j = boxes[inds, j * 8:(j + 1) * 8]
+        dets_j = np.hstack((polygons_j, scores_j[:, np.newaxis])).astype(
+            np.float32, copy=False
+        )
+
+        #not implemented yet
+        if cfg.TEST.SOFT_NMS.ENABLED:
+            nms_dets, _ = box_utils.soft_nms(
+                dets_j,
+                sigma=cfg.TEST.SOFT_NMS.SIGMA,
+                overlap_thresh=cfg.TEST.NMS,
+                score_thresh=0.0001,
+                method=cfg.TEST.SOFT_NMS.METHOD
+            )
+        else:
+            keep = box_utils.polygon_nms(dets_j, cfg.TEST.NMS)
+            nms_dets = dets_j[keep, :]
+        # Refine the post-NMS boxes using bounding-box voting
+        # Not implemented yet
+        if cfg.TEST.BBOX_VOTE.ENABLED:
+            nms_dets = box_utils.box_voting(
+                nms_dets,
+                dets_j,
+                cfg.TEST.BBOX_VOTE.VOTE_TH,
+                scoring_method=cfg.TEST.BBOX_VOTE.SCORING_METHOD
+            )
+        cls_polygons[j] = nms_dets
+
+    # Limit to max_per_image detections **over all classes**
+    if cfg.TEST.DETECTIONS_PER_IM > 0:
+        image_scores = np.hstack(
+            [cls_polygons[j][:, -1] for j in range(1, num_classes)]
+        )
+        if len(image_scores) > cfg.TEST.DETECTIONS_PER_IM:
+            image_thresh = np.sort(image_scores)[-cfg.TEST.DETECTIONS_PER_IM]
+            for j in range(1, num_classes):
+                keep = np.where(cls_polygons[j][:, -1] >= image_thresh)[0]
+                cls_polygons[j] = cls_polygons[j][keep, :]
+
+    im_results = np.vstack([cls_polygons[j] for j in range(1, num_classes)])
+    polygons = im_results[:, :-1]
+    scores = im_results[:, -1]
+    return scores, polygons, cls_polygons
 
 
 def segm_results(cls_boxes, masks, ref_boxes, im_h, im_w):

@@ -50,6 +50,7 @@ import numpy as np
 from detectron.core.config import cfg
 import detectron.utils.cython_bbox as cython_bbox
 import detectron.utils.cython_nms as cython_nms
+import detectron.utils.cython_polygon_nms as cython_polygon_nms
 
 bbox_overlaps = cython_bbox.bbox_overlaps
 
@@ -145,6 +146,78 @@ def clip_tiled_boxes(boxes, im_shape):
     # y2 < im_shape[0]
     boxes[:, 3::4] = np.maximum(np.minimum(boxes[:, 3::4], im_shape[0] - 1), 0)
     return boxes
+
+def clip_tiled_polygons(polygons, im_shape):
+    """Clip boxes to image boundaries. im_shape is [height, width] and polygons
+    has shape (N, 8 * num_tiled_boxes)."""
+    assert polygons.shape[1] % 8 == 0, \
+        'polygons.shape[1] is {:d}, but must be divisible by 8.'.format(
+        polygons.shape[1]
+    )
+    # x1 >= 0 && < im_shape[1]
+    polygons[:, 0::8] = np.maximum(np.minimum(polygons[:, 0::8], im_shape[1] - 1), 0)
+    # y1 >= 0 && < im_shape[0]
+    polygons[:, 1::8] = np.maximum(np.minimum(polygons[:, 1::8], im_shape[0] - 1), 0)
+    # x2 >= 0 && < im_shape[1]
+    polygons[:, 2::8] = np.maximum(np.minimum(polygons[:, 2::8], im_shape[1] - 1), 0)
+    # y2 >=0 && < im_shape[0]
+    polygons[:, 3::8] = np.maximum(np.minimum(polygons[:, 3::8], im_shape[0] - 1), 0)
+    # x3 >= 0 && < im_shape[1]
+    polygons[:, 4::8] = np.maximum(np.minimum(polygons[:, 4::8], im_shape[1] - 1), 0)
+    # y3 >= 0 && < im_shape[0]
+    polygons[:, 5::8] = np.maximum(np.minimum(polygons[:, 5::8], im_shape[0] - 1), 0)
+    # x4 >= 0 && < im_shape[1]
+    polygons[:, 6::8] = np.maximum(np.minimum(polygons[:, 6::8], im_shape[1] - 1), 0)
+    # y4 >=0 && < im_shape[0]
+    polygons[:, 7::8] = np.maximum(np.minimum(polygons[:, 7::8], im_shape[0] - 1), 0)
+    return polygons
+
+
+def polygon_transform(boxes, deltas, weights=(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)):
+    """Forward transform that maps proposal polygons to predicted ground-truth
+    polygons using polygon regression deltas. See polygon_transform_inv for a
+    description of the weights argument.
+    """
+    if boxes.shape[0] == 0:
+        return np.zeros((0, deltas.shape[1]), dtype=deltas.dtype)
+
+        boxes = boxes.astype(deltas.dtype, copy=False)
+
+    widths = boxes[:, 2] - boxes[:, 0] + 1.0
+    heights = boxes[:, 3] - boxes[:, 1] + 1.0
+    ctr_x = boxes[:, 0] + 0.5 * widths
+    ctr_y = boxes[:, 1] + 0.5 * heights
+
+    wx1, wy1, wx2, wy2, wx3, wy3, wx4, wy4 = weights
+    dx1 = deltas[:, 0::8] / wx1
+    dy1 = deltas[:, 1::8] / wy1
+    dx2 = deltas[:, 2::8] / wx2
+    dy2 = deltas[:, 3::8] / wy2
+    dx3 = deltas[:, 4::8] / wx3
+    dy3 = deltas[:, 5::8] / wy3
+    dx4 = deltas[:, 6::8] / wx4
+    dy4 = deltas[:, 7::8] / wy4
+
+    pred_polygons = np.zeros(deltas.shape, dtype=deltas.dtype)
+    # x1
+    pred_polygons[:, 0::8] = dx1 * widths[:, np.newaxis] + ctr_x[:, np.newaxis]
+    # y1
+    pred_polygons[:, 1::8] = dy1 * heights[:, np.newaxis] + ctr_y[:, np.newaxis]
+    # x2
+    pred_polygons[:, 2::8] = dx2 * widths[:, np.newaxis] + ctr_x[:, np.newaxis]
+    # y2
+    pred_polygons[:, 3::8] = dy2 * heights[:, np.newaxis] + ctr_y[:, np.newaxis]
+    # x3
+    pred_polygons[:, 4::8] = dx3 * widths[:, np.newaxis] + ctr_x[:, np.newaxis]
+    # y3
+    pred_polygons[:, 5::8] = dy3 * heights[:, np.newaxis] + ctr_y[:, np.newaxis]
+    # x4
+    pred_polygons[:, 6::8] = dx4 * widths[:, np.newaxis] + ctr_x[:, np.newaxis]
+    # y4
+    pred_polygons[:, 7::8] = dy4 * heights[:, np.newaxis] + ctr_y[:, np.newaxis]
+
+
+    return pred_polygons
 
 
 def bbox_transform(boxes, deltas, weights=(1.0, 1.0, 1.0, 1.0)):
@@ -250,9 +323,9 @@ def polygon_transform_inv(boxes, gt_boxes, gt_segms, weights=(1.0, 1.0, 1.0, 1.0
     gt_ctr_y1 = gt_boxes[:, 1]
     gt_ctr_x2 = gt_boxes[:, 0] + gt_widths
     gt_ctr_y2 = gt_boxes[:, 1]
-    gt_ctr_x3 = gt_boxes[:, 0]
+    gt_ctr_x3 = gt_boxes[:, 0] + gt_widths
     gt_ctr_y3 = gt_boxes[:, 1] + gt_heights
-    gt_ctr_x4 = gt_boxes[:, 0] + gt_widths
+    gt_ctr_x4 = gt_boxes[:, 0]
     gt_ctr_y4 = gt_boxes[:, 1] + gt_heights
 
     wx1, wy1, wx2, wy2, wx3, wy3, wx4, wy4 = weights
@@ -364,6 +437,13 @@ def box_voting(top_dets, all_dets, thresh, scoring_method='ID', beta=1.0):
             )
 
     return top_dets_out
+
+
+def polygon_nms(dets, thresh):
+    """Apply classic DPM-style greedy NMS."""
+    if dets.shape[0] == 0:
+        return []
+    return cython_polygon_nms.nms(dets, thresh)
 
 
 def nms(dets, thresh):

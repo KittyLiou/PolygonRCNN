@@ -51,6 +51,18 @@ ext_modules = [
         include_dirs=[
             _NP_INCLUDE_DIRS
         ]
+    ),
+    Extension(
+        name='detectron.utils.cython_polygon_nms',
+        sources=[
+            'detectron/utils/cython_polygon_nms.pyx'
+        ],
+        extra_compile_args=[
+            '-Wno-cpp'
+        ],
+        include_dirs=[
+            _NP_INCLUDE_DIRS
+        ]
     )
 ]
 
